@@ -1,0 +1,378 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Four in a Row</title>
+
+<style>
+body {
+  font-family: Arial, sans-serif;
+  background: #101322;
+  color: white;
+  text-align: center;
+  padding: 20px 8px;
+}
+
+h1 {
+  color: #65e6ff;
+}
+
+#level {
+  color: #ffd166;
+  font-weight: bold;
+}
+
+#status {
+  font-size: 19px;
+  min-height: 28px;
+  margin: 16px;
+}
+
+#score {
+  margin: 15px;
+}
+
+#board {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 5px;
+  background: #2458c5;
+  border: 5px solid #2458c5;
+  border-radius: 12px;
+  padding: 5px;
+  max-width: 490px;
+  margin: 20px auto;
+}
+
+.slot {
+  aspect-ratio: 1;
+  border-radius: 50%;
+  border: none;
+  background: #101322;
+  cursor: pointer;
+  padding: 0;
+}
+
+.slot.red {
+  background: #ff4b55;
+  box-shadow: inset 0 0 0 3px #d62f3b;
+}
+
+.slot.yellow {
+  background: #ffd447;
+  box-shadow: inset 0 0 0 3px #d9a900;
+}
+
+.column-button {
+  background: #252b45;
+  color: white;
+  border: none;
+  border-radius: 8px;
+  padding: 10px 0;
+  font-size: 18px;
+  cursor: pointer;
+}
+
+.column-button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.action {
+  background: #65e6ff;
+  color: #101322;
+  border: none;
+  border-radius: 10px;
+  padding: 12px 22px;
+  margin: 8px;
+  font-size: 16px;
+  font-weight: bold;
+  cursor: pointer;
+}
+</style>
+</head>
+
+<body>
+
+<h1>FOUR IN A ROW</h1>
+<p>Connect four discs to win!</p>
+<p id="level">Robot Level: MEDIUM</p>
+
+<div id="score">
+  You: <span id="playerScore">0</span> |
+  Robot: <span id="robotScore">0</span> |
+  Draws: <span id="drawScore">0</span>
+</div>
+
+<div id="status">Your turn! You are RED.</div>
+
+<div id="columns" style="
+  display:grid;
+  grid-template-columns:repeat(7,minmax(0,1fr));
+  gap:5px;
+  max-width:500px;
+  margin:auto;">
+</div>
+
+<div id="board"></div>
+
+<button class="action" id="restart">Play Again</button>
+
+<script>
+const ROWS = 6;
+const COLS = 7;
+
+let board = [];
+let gameOver = false;
+let thinking = false;
+let playerScore = 0;
+let robotScore = 0;
+let drawScore = 0;
+let roundId = 0;
+
+const boardElement = document.getElementById("board");
+const columnsElement = document.getElementById("columns");
+const statusText = document.getElementById("status");
+
+function newBoard() {
+  return Array.from({ length: ROWS }, () => Array(COLS).fill(0));
+}
+
+function buildBoard() {
+  columnsElement.innerHTML = "";
+  boardElement.innerHTML = "";
+
+  for (let c = 0; c < COLS; c++) {
+    const button = document.createElement("button");
+    button.className = "column-button";
+    button.textContent = "↓";
+    button.setAttribute("aria-label", "Drop disc in column " + (c + 1));
+    button.addEventListener("click", () => playerMove(c));
+    columnsElement.appendChild(button);
+  }
+
+  for (let r = 0; r < ROWS; r++) {
+    for (let c = 0; c < COLS; c++) {
+      const cell = document.createElement("div");
+      cell.className = "slot";
+      boardElement.appendChild(cell);
+    }
+  }
+}
+
+function render() {
+  const slots = boardElement.children;
+
+  for (let r = 0; r < ROWS; r++) {
+    for (let c = 0; c < COLS; c++) {
+      const slot = slots[r * COLS + c];
+      slot.className = "slot";
+
+      if (board[r][c] === 1) slot.classList.add("red");
+      if (board[r][c] === 2) slot.classList.add("yellow");
+    }
+  }
+
+  [...columnsElement.children].forEach((button, c) => {
+    button.disabled =
+      gameOver || thinking || board[0][c] !== 0;
+  });
+}
+
+function dropDisc(b, col, player) {
+  for (let r = ROWS - 1; r >= 0; r--) {
+    if (b[r][col] === 0) {
+      b[r][col] = player;
+      return r;
+    }
+  }
+  return -1;
+}
+
+function hasWon(b, player) {
+  const directions = [
+    [0, 1], [1, 0], [1, 1], [1, -1]
+  ];
+
+  for (let r = 0; r < ROWS; r++) {
+    for (let c = 0; c < COLS; c++) {
+      if (b[r][c] !== player) continue;
+
+      for (const [dr, dc] of directions) {
+        let count = 1;
+
+        for (let k = 1; k < 4; k++) {
+          const nr = r + dr * k;
+          const nc = c + dc * k;
+
+          if (
+            nr < 0 || nr >= ROWS ||
+            nc < 0 || nc >= COLS ||
+            b[nr][nc] !== player
+          ) break;
+
+          count++;
+        }
+
+        if (count >= 4) return true;
+      }
+    }
+  }
+
+  return false;
+}
+
+function isDraw(b) {
+  return b[0].every(value => value !== 0);
+}
+
+function availableColumns(b) {
+  return Array.from({ length: COLS }, (_, c) => c)
+    .filter(c => b[0][c] === 0);
+}
+
+function findWinningColumn(player) {
+  for (const c of availableColumns(board)) {
+    const copy = board.map(row => [...row]);
+    dropDisc(copy, c, player);
+
+    if (hasWon(copy, player)) return c;
+  }
+
+  return null;
+}
+
+function robotMove() {
+  if (gameOver) return;
+
+  const choices = availableColumns(board);
+  if (!choices.length) {
+    finishGame(0);
+    return;
+  }
+
+  let move = null;
+
+  // Medium difficulty: the robot sometimes plays randomly.
+  if (Math.random() >= 0.30) {
+    // Win immediately if possible.
+    move = findWinningColumn(2);
+
+    // Block the player's immediate win.
+    if (move === null && Math.random() < 0.80) {
+      move = findWinningColumn(1);
+    }
+
+    // Prefer the middle columns sometimes.
+    if (move === null && Math.random() < 0.60) {
+      const preferred = choices.filter(c => c >= 2 && c <= 4);
+      if (preferred.length) {
+        move = preferred[Math.floor(Math.random() * preferred.length)];
+      }
+    }
+  }
+
+  if (move === null) {
+    move = choices[Math.floor(Math.random() * choices.length)];
+  }
+
+  dropDisc(board, move, 2);
+  render();
+
+  if (hasWon(board, 2)) {
+    finishGame(2);
+  } else if (isDraw(board)) {
+    finishGame(0);
+  } else {
+    thinking = false;
+    statusText.textContent = "Your turn! You are RED.";
+    render();
+  }
+}
+
+function playerMove(col) {
+  if (gameOver || thinking || board[0][col] !== 0) return;
+
+  dropDisc(board, col, 1);
+  render();
+
+  if (hasWon(board, 1)) {
+    finishGame(1);
+    return;
+  }
+
+  if (isDraw(board)) {
+    finishGame(0);
+    return;
+  }
+
+  thinking = true;
+  statusText.textContent = "Robot is thinking...";
+  render();
+
+  const thisRound = roundId;
+
+  setTimeout(() => {
+    if (thisRound === roundId) robotMove();
+  }, 450);
+}
+
+function updateScore() {
+  document.getElementById("playerScore").textContent = playerScore;
+  document.getElementById("robotScore").textContent = robotScore;
+  document.getElementById("drawScore").textContent = drawScore;
+}
+
+function finishGame(result) {
+  if (gameOver) return;
+
+  gameOver = true;
+  thinking = false;
+
+  if (result === 1) {
+    playerScore++;
+    statusText.textContent = "You win!";
+  } else if (result === 2) {
+    robotScore++;
+    statusText.textContent = "The robot wins!";
+  } else {
+    drawScore++;
+    statusText.textContent = "It's a draw!";
+  }
+
+  updateScore();
+  render();
+
+  const thisRound = roundId;
+
+  setTimeout(() => {
+    if (thisRound !== roundId) return;
+
+    board = newBoard();
+    gameOver = false;
+    thinking = false;
+    statusText.textContent = "New round! Your turn — RED goes first.";
+    render();
+  }, 1800);
+}
+
+function restartGame() {
+  roundId++;
+  board = newBoard();
+  gameOver = false;
+  thinking = false;
+  statusText.textContent = "Your turn! You are RED.";
+  render();
+}
+
+document.getElementById("restart")
+  .addEventListener("click", restartGame);
+
+board = newBoard();
+buildBoard();
+render();
+</script>
+
+</body>
+</html>
